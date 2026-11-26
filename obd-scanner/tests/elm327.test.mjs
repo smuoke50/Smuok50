@@ -208,3 +208,36 @@ test('TrimAnalyzer does not conclude "lean everywhere" from idle samples alone',
   assert.match(v.text, /2500/);
   assert.doesNotMatch(v.text, /كل الحالات/);
 });
+
+test('decodeMode06: unsigned and signed records, pass/fail on raw values', async () => {
+  const { decodeMode06 } = await import('../src/elm327.js');
+  const msg = [0x46, 0x21, 0x80, 0x01, 0x04, 0x10, 0x00, 0x00, 0x03, 0x20,
+    0x21, 0x81, 0x81, 0xff, 0xf6, 0xff, 0xec, 0x00, 0x0a];
+  const r = decodeMode06(msg, 0x21);
+  assert.equal(r.length, 2);
+  assert.deepEqual([r[0].value, r[0].max, r[0].pass], [0x410, 0x320, false]);
+  assert.deepEqual([r[1].value, r[1].min, r[1].max, r[1].pass], [-10, -20, 10, true]);
+});
+
+test('freeze frame and mode 06 against simulator', async () => {
+  const elm = new Elm327(createSimTransport({ delayMs: 0 }));
+  await elm.init();
+  const ff = await elm.readFreezeFrame();
+  assert.equal(ff.dtc, 'P0171');
+  assert.equal(decodePid(0x05, ff.values[0x05]), 88);
+  assert.equal(decodePid(0x0c, ff.values[0x0c]), 780);
+  const tests = await elm.readMonitorTests();
+  assert.equal(tests.length, 7);
+  const cat = tests.find((t) => t.mid === 0x21);
+  assert.equal(cat.pass, false, 'catalyst test fails, matching P0420');
+  assert.ok(tests.filter((t) => t.mid >= 0xa2).every((t) => t.pass));
+  await elm.clearDtcs();
+  assert.equal(await elm.readFreezeFrame(), null, 'no freeze frame after clear');
+});
+
+test('midName', async () => {
+  const { midName } = await import('../src/pids.js');
+  assert.match(midName(0x21), /المحفّز/);
+  assert.match(midName(0xa3), /السلندر 2/);
+  assert.match(midName(0x05), /بنك 2، حساس 1/);
+});

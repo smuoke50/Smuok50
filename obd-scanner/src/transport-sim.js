@@ -129,6 +129,41 @@ export function createSimTransport({ delayMs = 18, now = () => Date.now() } = {}
         default: return 'NO DATA';
       }
     }
+    if (mode === '02') {
+      // Freeze frame #0 captured when P0171 was stored: warm engine at idle, lean.
+      if (!state.stored.length) return 'NO DATA';
+      const ff = { 0x02: dtcBytes('P0171'), 0x04: [56], 0x05: [88 + 40], 0x06: [146], 0x07: [145], 0x0c: [0x0c, 0x30], 0x0d: [0], 0x0f: [36 + 40], 0x11: [9] };
+      if (pid === 0x00) {
+        const b = [0, 0, 0, 0];
+        for (const p of Object.keys(ff).map(Number)) { const i = p - 1; b[i >> 3] |= 0x80 >> (i & 7); }
+        return canFormat([0x42, 0x00, 0x00, ...b]);
+      }
+      return ff[pid] ? canFormat([0x42, pid, 0x00, ...ff[pid]]) : 'NO DATA';
+    }
+    if (mode === '06') {
+      // MIDs 01 (O2 B1S1), 21 (catalyst B1, failing -> P0420), A2..A5 (misfire cyl 1-4).
+      const tests = {
+        0x01: [[0x01, 0x0a, 0x0190, 0x0100, 0x0300], [0x05, 0x10, 0x0050, 0x0000, 0x0096]],
+        0x21: [[0x80, 0x01, 0x0410, 0x0000, 0x0320]],
+        0xa2: [[0x0b, 0x24, 0x0000, 0x0000, 0x0014]],
+        0xa3: [[0x0b, 0x24, 0x0003, 0x0000, 0x0014]],
+        0xa4: [[0x0b, 0x24, 0x0001, 0x0000, 0x0014]],
+        0xa5: [[0x0b, 0x24, 0x0000, 0x0000, 0x0014]],
+      };
+      if (pid % 0x20 === 0) {
+        const b = [0, 0, 0, 0];
+        for (const m of Object.keys(tests).map(Number)) {
+          if (m > pid && m <= pid + 0x20) { const i = m - pid - 1; b[i >> 3] |= 0x80 >> (i & 7); }
+        }
+        const higher = Object.keys(tests).map(Number).some((m) => m > pid + 0x20);
+        if (higher) b[3] |= 0x01; // next range supported
+        return canFormat([0x46, pid, ...b]);
+      }
+      const recs = tests[pid];
+      if (!recs) return 'NO DATA';
+      const u16 = (x) => [(x >> 8) & 0xff, x & 0xff];
+      return canFormat([0x46, ...recs.flatMap(([tid, uas, v, mn, mx]) => [pid, tid, uas, ...u16(v), ...u16(mn), ...u16(mx)])]);
+    }
     if (mode === '03' || mode === '07' || mode === '0A') {
       const list = { '03': state.stored, '07': state.pending, '0A': state.permanent }[mode];
       const sid = parseInt(mode, 16) + 0x40;

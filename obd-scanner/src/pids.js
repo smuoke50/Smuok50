@@ -52,3 +52,25 @@ export function decodeMonitorStatus([a, b, c, d]) {
   names.forEach((n, i) => n && add(n, c & (1 << i), d & (1 << i)));
   return { mil, dtcCount, diesel, monitors };
 }
+
+/** SAE J1979 on-board monitor IDs (mode 06) -> Arabic name. */
+export function midName(mid) {
+  const bs = (n) => `بنك ${Math.floor(n / 4) + 1}، حساس ${(n % 4) + 1}`;
+  if (mid >= 0x01 && mid <= 0x10) return `حساس الأكسجين (${bs(mid - 0x01)})`;
+  if (mid >= 0x21 && mid <= 0x24) return `كفاءة المحفّز (بنك ${mid - 0x20})`;
+  if (mid >= 0x31 && mid <= 0x34) return `نظام EGR (بنك ${mid - 0x30})`;
+  if (mid >= 0x35 && mid <= 0x38) return `توقيت الكامات VVT (بنك ${mid - 0x34})`;
+  const fixed = {
+    0x39: 'تسريب EVAP (غطاء الخزان)', 0x3a: 'تسريب EVAP ‏(0.090 بوصة)', 0x3b: 'تسريب EVAP ‏(0.040 بوصة)',
+    0x3c: 'تسريب EVAP ‏(0.020 بوصة)', 0x3d: 'تدفق تنظيف EVAP', 0xa1: 'انعدام الإشعال (عام)',
+    0xb0: 'فلتر الجزيئات DPF (بنك 1)', 0xb1: 'فلتر الجزيئات DPF (بنك 2)',
+  };
+  if (fixed[mid]) return fixed[mid];
+  if (mid >= 0x41 && mid <= 0x50) return `سخّان حساس الأكسجين (${bs(mid - 0x41)})`;
+  if (mid >= 0x61 && mid <= 0x64) return `تسخين المحفّز (بنك ${mid - 0x60})`;
+  if (mid >= 0x71 && mid <= 0x74) return `الهواء الثانوي ${mid - 0x70}`;
+  if (mid >= 0x81 && mid <= 0x84) return `نظام الوقود (بنك ${mid - 0x80})`;
+  if (mid >= 0x85 && mid <= 0x88) return `ضغط التيربو (بنك ${mid - 0x84})`;
+  if (mid >= 0xa2 && mid <= 0xad) return `انعدام الإشعال — السلندر ${mid - 0xa1}`;
+  return `اختبار 0x${mid.toString(16).toUpperCase().padStart(2, '0')}`;
+}

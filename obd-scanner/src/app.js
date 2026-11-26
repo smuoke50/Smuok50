@@ -1,7 +1,7 @@
 import { Elm327 } from './elm327.js';
 import { connectBle, bleSupported } from './transport-ble.js';
 import { createSimTransport } from './transport-sim.js';
-import { PIDS, LIVE_PIDS, DEFAULT_LIVE, decodePid, decodeMonitorStatus } from './pids.js';
+import { PIDS, LIVE_PIDS, DEFAULT_LIVE, decodePid, decodeMonitorStatus, midName } from './pids.js';
 import { describeDtc } from './dtc-db.js';
 import { TrimAnalyzer, fuelLphFromMaf, lPer100, inspectionVerdict, SprintTimer } from './analysis.js';
 
@@ -15,7 +15,7 @@ function h(tag, props = {}, ...kids) {
     else if (k === 'text') el.textContent = v;
     else el.setAttribute(k, v === true ? '' : v);
   }
-  for (const kid of kids.flat()) {
+  for (const kid of kids.flat(Infinity)) {
     if (kid == null || kid === false) continue;
     el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
   }
@@ -52,6 +52,8 @@ const state = {
   sprint: new SprintTimer(100),
   fuelPrice: store.get('fuelPrice', null),
   inspection: null,
+  freeze: undefined, // undefined = not read, null = none stored
+  tests: undefined,
 };
 function newTrip() { return { dist: 0, fuel: 0, startT: null, lastT: null }; }
 
@@ -144,7 +146,7 @@ async function connect(kind) {
 async function disconnect(silent = false) {
   stopPolling();
   const elm = state.elm;
-  Object.assign(state, { elm: null, transport: null, info: null, vin: null, volt: null, status: null, dtcs: null, inspection: null, conn: 'off', live: {} });
+  Object.assign(state, { elm: null, transport: null, info: null, vin: null, volt: null, status: null, dtcs: null, inspection: null, freeze: undefined, tests: undefined, conn: 'off', live: {} });
   state.trims.reset();
   try { await elm?.close(); } catch { /* ignore */ }
   setPill();
@@ -178,6 +180,8 @@ async function clearDtcs() {
   if (!ok) return;
   await run('جارِ المسح…', async () => {
     await state.elm.clearDtcs();
+    state.freeze = undefined;
+    state.tests = undefined;
     toast('تم مسح الأعطال.');
   });
   if (state.conn === 'on') await scanDtcs();
@@ -200,6 +204,20 @@ async function runInspection() {
       permanentCount: permanent.length,
     };
     state.inspection = { ...data, verdict: inspectionVerdict(data) };
+  });
+}
+
+async function readFreeze() {
+  await run('جارِ قراءة لحظة العطل…', async () => {
+    state.freeze = await state.elm.readFreezeFrame();
+    if (!state.freeze) toast('لا توجد صورة مخزّنة للحظة العطل.');
+  });
+}
+
+async function readTests() {
+  await run('جارِ قراءة الاختبارات…', async () => {
+    state.tests = await state.elm.readMonitorTests();
+    if (!state.tests) toast('هذه السيارة لا تدعم نتائج الاختبارات (Mode 06).');
   });
 }
 
@@ -382,7 +400,24 @@ function faultsView() {
     group('أعطال مؤكَّدة', r?.stored, 'stored'),
     group('أعطال معلّقة', r?.pending, 'pending'),
     group('أعطال دائمة', r?.permanent, 'permanent'),
+    freezeCard(),
   ];
+}
+
+function freezeCard() {
+  const f = state.freeze;
+  const rows = f ? Object.entries(f.values).map(([pid, bytes]) => {
+    const def = PIDS[pid];
+    const v = decodePid(Number(pid), bytes);
+    return def && v != null ? [h('dt', {}, def.name), h('dd', { class: 'num' }, `${fmt(v, Math.abs(def.max) <= 25 ? 1 : 0)} ${def.unit}`)] : null;
+  }).filter(Boolean) : [];
+  return h('div', { class: 'card' },
+    h('h2', {}, 'صورة لحظة العطل'),
+    h('p', { class: 'small muted' }, 'حالة المحرك لحظة تسجيل العطل: الحرارة والدوران والسرعة والحِمل. تساعدك تعرف هل حصل العطل والمحرك بارد أو حار، واقف أو ماشي.'),
+    busyBtn(f === undefined ? 'اقرأ' : 'أعد القراءة', 'جارِ قراءة لحظة العطل…', readFreeze, 'btn'),
+    f && h('p', {}, 'سجّلها العطل ', h('span', { class: 'code' }, f.dtc), ' — ', describeDtc(f.dtc).title),
+    f && h('dl', { class: 'kv' }, rows),
+    f === null && h('p', { class: 'muted small' }, 'لا توجد صورة مخزّنة.'));
 }
 
 function gauge(pid, big = false) {
@@ -495,7 +530,23 @@ function inspectView() {
       h('h2', {}, `أنظمة المراقبة (${r.status.diesel ? 'ديزل' : 'بنزين'})`),
       r.status.monitors.map((m) => h('div', { class: 'monitor' }, h('span', {}, m.name),
         h('span', { class: `badge ${m.ready ? 'ok' : 'warn'}` }, m.ready ? 'جاهز' : 'غير مكتمل')))),
+    testsCard(),
   ];
+}
+
+function testsCard() {
+  const t = state.tests;
+  const failed = t ? t.filter((x) => !x.pass) : [];
+  return h('div', { class: `card ${t ? (failed.length ? 'tone-warn' : 'tone-ok') : ''}` },
+    h('h2', {}, 'نتائج اختبارات المراقبة'),
+    h('p', { class: 'small muted' }, 'نتائج آخر اختبار أجراه كمبيوتر السيارة على المحفّز وحساسات الأكسجين وانعدام الإشعال وغيرها. الاختبار الراسب ينبّهك قبل أن تضيء لمبة فحص المحرك.'),
+    busyBtn(t === undefined ? 'اقرأ النتائج' : 'أعد القراءة', 'جارِ قراءة الاختبارات…', readTests, 'btn'),
+    t && h('p', {}, failed.length ? `${failed.length} من ${t.length} اختبار خارج الحدود.` : `كل الاختبارات (${t.length}) ضمن الحدود.`),
+    t && t.map((x) => h('div', { class: 'monitor' },
+      h('span', {}, midName(x.mid), h('br'), h('span', { class: 'muted small num' }, `${x.value} [${x.min} – ${x.max}]`)),
+      h('span', { class: `badge ${x.pass ? 'ok' : 'bad'}` }, x.pass ? 'ناجح' : 'راسب'))),
+    t && h('p', { class: 'small muted' }, 'الأرقام قيم خام وحدودها كما يرسلها كمبيوتر السيارة؛ وحداتها تختلف حسب الاختبار.'),
+    t === null && h('p', { class: 'muted small' }, 'غير مدعوم في هذه السيارة.'));
 }
 
 // ---------- live DOM updates (no re-render) ----------

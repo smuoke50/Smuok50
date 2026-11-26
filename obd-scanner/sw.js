@@ -1,5 +1,5 @@
 // App-shell cache: the app works fully offline once loaded (it talks to the car, not to a server).
-const VERSION = 'fahis-v1';
+const VERSION = 'fahis-v2';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest', 'icons/icon.svg',
   'src/app.js', 'src/elm327.js', 'src/pids.js', 'src/dtc-db.js', 'src/analysis.js',

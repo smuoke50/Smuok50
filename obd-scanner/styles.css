@@ -133,7 +133,8 @@ p { margin: 0 0 10px; }
 .dtc .body { padding: 0 12px 12px; }
 .dtc ul { margin: 4px 0 8px; padding-inline-start: 20px; }
 
-.monitor { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.monitor { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.monitor .badge { flex: none; }
 .monitor:last-child { border-bottom: 0; }
 
 .hero { text-align: center; padding: 24px 8px; }

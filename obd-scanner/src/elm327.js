@@ -134,6 +134,28 @@ export function decodeSupported(base, data) {
   return out;
 }
 
+/**
+ * Decode one mode 06 (CAN) response: 46 then records of
+ * [MID TID UASID valueHi valueLo minHi minLo maxHi maxLo]. UASID >= 0x80 means signed values.
+ * Pass/fail compares raw values, which is valid whatever the unit scaling.
+ */
+export function decodeMode06(msg, mid) {
+  if (msg[0] !== 0x46) return [];
+  const out = [];
+  for (let i = 1; i + 8 < msg.length; i += 9) {
+    if (msg[i] !== mid) continue;
+    const uasid = msg[i + 2];
+    const u16 = (o) => (msg[o] << 8) | msg[o + 1];
+    const s16 = (o) => { const v = u16(o); return v & 0x8000 ? v - 0x10000 : v; };
+    const rd = uasid >= 0x80 ? s16 : u16;
+    const value = rd(i + 3);
+    const min = rd(i + 5);
+    const max = rd(i + 7);
+    out.push({ mid, tid: msg[i + 1], uasid, value, min, max, pass: value >= min && value <= max });
+  }
+  return out;
+}
+
 export class Elm327 {
   constructor(transport, { timeoutMs = 4000, onLog = null } = {}) {
     this.t = transport;
@@ -280,6 +302,53 @@ export class Elm327 {
     if (kind === 'no-data') return [];
     if (kind !== 'ok') throw new ElmError('DTC', `فشل قراءة الأعطال (${lines.join(' ')})`);
     return decodeDtcs(assembleMessages(lines), sid, this.isCan);
+  }
+
+  /**
+   * Mode 02 freeze frame #0: the DTC that stored it plus the PIDs captured at that moment.
+   * Returns null when the ECU holds no freeze frame.
+   */
+  async readFreezeFrame() {
+    const req = async (pid) => {
+      const lines = await this.send('02' + pid.toString(16).padStart(2, '0').toUpperCase() + '00');
+      if (classify(lines) !== 'ok') return null;
+      const msg = assembleMessages(lines).find((m) => m[0] === 0x42 && m[1] === pid);
+      return msg ? msg.slice(3) : null; // skip SID, PID, frame number
+    };
+    const dtcBytes = await req(0x02);
+    if (!dtcBytes || dtcBytes.length < 2 || (dtcBytes[0] === 0 && dtcBytes[1] === 0)) return null;
+    const bitmap = await req(0x00);
+    const supported = bitmap && bitmap.length >= 4 ? decodeSupported(0, bitmap) : [...this.supported].filter((p) => p <= 0x20);
+    const values = {};
+    for (const pid of supported) {
+      if (pid === 0x01 || pid === 0x02 || pid === 0x20) continue;
+      const data = await req(pid).catch(() => null);
+      if (data) values[pid] = data;
+    }
+    return { dtc: formatDtc(dtcBytes[0], dtcBytes[1]), values };
+  }
+
+  /** Mode 06 on-board monitor test results (CAN only). Returns null when unsupported. */
+  async readMonitorTests() {
+    if (!this.isCan) return null;
+    const mids = [];
+    for (let base = 0x00; base <= 0xe0; base += 0x20) {
+      const lines = await this.send('06' + base.toString(16).padStart(2, '0').toUpperCase());
+      if (classify(lines) !== 'ok') break;
+      const msg = assembleMessages(lines).find((m) => m[0] === 0x46 && m[1] === base);
+      if (!msg || msg.length < 6) break;
+      const sup = decodeSupported(base, msg.slice(2, 6));
+      mids.push(...sup.filter((m) => m % 0x20 !== 0));
+      if (!sup.includes(base + 0x20)) break;
+    }
+    if (!mids.length) return null;
+    const results = [];
+    for (const mid of mids) {
+      const lines = await this.send('06' + mid.toString(16).padStart(2, '0').toUpperCase()).catch(() => []);
+      if (classify(lines) !== 'ok') continue;
+      for (const msg of assembleMessages(lines)) results.push(...decodeMode06(msg, mid));
+    }
+    return results;
   }
 
   async clearDtcs() {
