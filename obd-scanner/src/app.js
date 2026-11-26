@@ -1,6 +1,7 @@
 import { Elm327 } from './elm327.js';
 import { connectBle, bleSupported } from './transport-ble.js';
 import { createSimTransport } from './transport-sim.js';
+import { nativeAvailable, scanNative, connectNative, shareNative } from './transport-native.js';
 import { PIDS, LIVE_PIDS, DEFAULT_LIVE, decodePid, decodeMonitorStatus, midName } from './pids.js';
 import { describeDtc } from './dtc-db.js';
 import { TrimAnalyzer, fuelLphFromMaf, lPer100, inspectionVerdict, SprintTimer } from './analysis.js';
@@ -52,6 +53,8 @@ const state = {
   sprint: new SprintTimer(100),
   fuelPrice: store.get('fuelPrice', null),
   inspection: null,
+  devices: null, // native app: adapters found by scan
+  scanning: false,
   freeze: undefined, // undefined = not read, null = none stored
   tests: undefined,
 };
@@ -114,14 +117,27 @@ const busyBtn = (label, busyLabel, onclick, cls = 'btn btn-primary') =>
     state.busy === busyLabel ? [h('span', { class: 'spinner' }), ' ', busyLabel] : label);
 
 // ---------- connection ----------
-async function connect(kind) {
+async function scanDevices() {
+  if (state.scanning) return;
+  state.scanning = true;
+  state.devices = null;
+  render();
+  try { state.devices = await scanNative(); }
+  catch (e) { toast(e?.message || 'تعذّر البحث'); }
+  finally { state.scanning = false; render(); }
+}
+
+async function connect(kind, device) {
   if (state.conn !== 'off') return;
   state.conn = 'connecting';
   setPill();
   render();
   try {
+    const lost = () => { if (state.conn === 'on') { toast('انقطع الاتصال بالمحوّل.'); disconnect(true); } };
     const transport = kind === 'sim'
       ? createSimTransport()
+      : kind === 'native'
+      ? await connectNative(device, { onDisconnect: lost })
       : await connectBle({ onDisconnect: () => { if (state.conn === 'on') { toast('انقطع الاتصال بالمحوّل.'); disconnect(true); } } });
     state.transport = transport;
     state.elm = new Elm327(transport);
@@ -298,8 +314,11 @@ function exportCsv() {
   const keys = [...new Set(state.log.flatMap((r) => Object.keys(r)))];
   const esc = (v) => (v == null ? '' : typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(3)) : `"${String(v).replace(/"/g, '""')}"`);
   const rows = [keys.join(','), ...state.log.map((r) => keys.map((k) => (k === 't' ? new Date(r.t).toISOString() : esc(r[k]))).join(','))];
-  const blob = new Blob(['﻿' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const a = h('a', { href: URL.createObjectURL(blob), download: `fahis-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv` });
+  const fname = `fahis-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+  const csv = '\ufeff' + rows.join('\n');
+  if (nativeAvailable()) return shareNative(fname, csv);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const a = h('a', { href: URL.createObjectURL(blob), download: fname });
   document.body.append(a);
   a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
@@ -307,6 +326,7 @@ function exportCsv() {
 
 // ---------- views ----------
 function homeView() {
+  if (state.conn !== 'on' && nativeAvailable()) return nativeHomeView();
   if (state.conn !== 'on') {
     const ble = bleSupported();
     return [
@@ -348,6 +368,35 @@ function homeView() {
         h('dt', {}, 'البيانات المدعومة'), h('dd', {}, `${state.info?.supported?.size || 0} قراءة`)),
       state.volt && h('p', { class: 'small muted' }, batteryHint(state.volt))),
     h('button', { class: 'btn btn-ghost btn-block', onclick: () => disconnect() }, 'قطع الاتصال'),
+  ];
+}
+
+function nativeHomeView() {
+  const busy = state.scanning || state.conn === 'connecting';
+  const list = state.devices;
+  return [
+    h('section', { class: 'hero' },
+      h('img', { class: 'logo', src: 'icons/icon.svg', alt: '' }),
+      h('h1', {}, 'افحص سيارتك بنفسك'),
+      h('p', { class: 'muted' }, 'ركّب المحوّل في منفذ OBD2 تحت الطبلون، وشغّل السيارة، ثم ابحث عنه.')),
+    h('div', { class: 'card stack' },
+      h('button', { class: 'btn btn-primary btn-block', disabled: busy, onclick: scanDevices },
+        state.scanning ? [h('span', { class: 'spinner' }), ' جارِ البحث…'] : list ? 'ابحث مرة أخرى' : 'ابحث عن المحوّل'),
+      h('button', { class: 'btn btn-block', disabled: busy, onclick: () => connect('sim') }, 'جرّب على سيارة تجريبية')),
+    list && h('div', { class: 'card' },
+      h('h2', {}, list.length ? 'اختر المحوّل' : 'لم يُعثر على أجهزة'),
+      list.map((d) => h('div', { class: 'monitor' },
+        h('span', {}, d.name, h('br'), h('span', { class: 'muted small num' }, d.address)),
+        h('span', { class: 'row' },
+          h('span', { class: 'badge' }, d.kind === 'ble' ? 'BLE' : 'كلاسيكي'),
+          h('button', { class: 'btn', disabled: busy, onclick: () => connect('native', d) },
+            state.conn === 'connecting' ? h('span', { class: 'spinner' }) : 'اتصل'))))),
+    h('div', { class: 'card' },
+      h('h2', {}, 'ملاحظات'),
+      h('ul', { class: 'small' },
+        h('li', {}, 'المحوّل الكلاسيكي: اقرنه أولاً من إعدادات البلوتوث في الجوال (الرمز غالباً 1234 أو 0000)، ثم ارجع هنا.'),
+        h('li', {}, 'محوّل BLE: لا يحتاج اقتران، يظهر في البحث مباشرة.'),
+        h('li', {}, 'اسم المحوّل غالباً OBDII أو V-LINK أو vLinker.'))),
   ];
 }
 
@@ -613,7 +662,7 @@ document.addEventListener('visibilitychange', () => {
   else render();
 });
 
-if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+if ('serviceWorker' in navigator && location.protocol !== 'file:' && !nativeAvailable()) {
   navigator.serviceWorker.register('sw.js').catch(() => { /* offline support is best-effort */ });
 }
 
