@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="description" content="فاحص: اقرأ أعطال سيارتك وامسحها، وتابع بياناتها المباشرة عبر محوّل OBD2 بلوتوث.">
+  <title>فاحص</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="src/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="28" height="28">
+      <span>فاحص</span>
+    </div>
+    <span id="conn-pill" class="pill pill-off">غير متصل</span>
+  </header>
+
+  <main id="view" tabindex="-1"></main>
+
+  <nav class="tabbar" aria-label="الأقسام">
+    <button data-tab="home" class="active"><span class="ico">⌂</span>الرئيسية</button>
+    <button data-tab="faults"><span class="ico">⚠</span>الأعطال</button>
+    <button data-tab="live"><span class="ico">◔</span>مباشر</button>
+    <button data-tab="trip"><span class="ico">⛽</span>الرحلة</button>
+    <button data-tab="inspect"><span class="ico">✓</span>فحص الشراء</button>
+  </nav>
+
+  <dialog id="confirm">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2>
+      <div id="confirm-body"></div>
+      <menu>
+        <button value="cancel" class="btn btn-ghost">إلغاء</button>
+        <button value="ok" id="confirm-ok" class="btn btn-danger">تأكيد</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
