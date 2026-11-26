@@ -1,0 +1,5 @@
+www/
+build/
+Payload/
+Fahis.xcodeproj/
+*.ipa
