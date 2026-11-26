@@ -372,6 +372,7 @@ function homeView() {
 }
 
 function nativeHomeView() {
+  const ios = window.FahisNative?.platform === 'ios';
   const busy = state.scanning || state.conn === 'connecting';
   const list = state.devices;
   return [
@@ -386,7 +387,7 @@ function nativeHomeView() {
     list && h('div', { class: 'card' },
       h('h2', {}, list.length ? 'اختر المحوّل' : 'لم يُعثر على أجهزة'),
       list.map((d) => h('div', { class: 'monitor' },
-        h('span', {}, d.name, h('br'), h('span', { class: 'muted small num' }, d.address)),
+        h('span', {}, d.name, !ios && [h('br'), h('span', { class: 'muted small num' }, d.address)]),
         h('span', { class: 'row' },
           h('span', { class: 'badge' }, d.kind === 'ble' ? 'BLE' : 'كلاسيكي'),
           h('button', { class: 'btn', disabled: busy, onclick: () => connect('native', d) },
@@ -394,8 +395,10 @@ function nativeHomeView() {
     h('div', { class: 'card' },
       h('h2', {}, 'ملاحظات'),
       h('ul', { class: 'small' },
-        h('li', {}, 'المحوّل الكلاسيكي: اقرنه أولاً من إعدادات البلوتوث في الجوال (الرمز غالباً 1234 أو 0000)، ثم ارجع هنا.'),
-        h('li', {}, 'محوّل BLE: لا يحتاج اقتران، يظهر في البحث مباشرة.'),
+        ios
+          ? h('li', {}, 'الآيفون يعمل مع محوّلات BLE فقط. لا تقرنه من إعدادات البلوتوث: يظهر هنا في البحث مباشرة.')
+          : [h('li', {}, 'المحوّل الكلاسيكي: اقرنه أولاً من إعدادات البلوتوث في الجوال (الرمز غالباً 1234 أو 0000)، ثم ارجع هنا.'),
+            h('li', {}, 'محوّل BLE: لا يحتاج اقتران، يظهر في البحث مباشرة.')],
         h('li', {}, 'اسم المحوّل غالباً OBDII أو V-LINK أو vLinker.'))),
   ];
 }

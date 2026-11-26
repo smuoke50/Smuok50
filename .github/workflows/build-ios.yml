@@ -1,0 +1,66 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [main, claude/similar-app-t5153r]
+    paths: ["ios/**", "obd-scanner/**", ".github/workflows/build-ios.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Web app tests
+        run: cd obd-scanner && node --test tests/*.test.mjs
+
+      - name: Bundle web app into ios/www
+        run: bash ios/scripts/prepare-www.sh
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Build unsigned app
+        run: |
+          set -o pipefail
+          cd ios
+          xcodebuild -project Fahis.xcodeproj -scheme Fahis -configuration Release \
+            -sdk iphoneos -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | grep -E "error|warning: .*Fahis|BUILD" || true
+          test -d build/Build/Products/Release-iphoneos/Fahis.app
+
+      - name: Package IPA
+        run: |
+          cd ios
+          rm -rf Payload && mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/Fahis.app Payload/
+          zip -qry fahis.ipa Payload
+          ls -la fahis.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: fahis-ipa
+          path: ios/fahis.ipa
+
+      - name: Publish IPA to release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create fahis-ios ios/fahis.ipa --target "$GITHUB_SHA" \
+            --title "فاحص للآيفون — آخر نسخة" \
+            --notes "نزّل fahis.ipa وثبّته عبر SideStore أو AltStore. يحتاج محوّل OBD2 من نوع BLE." \
+            || gh release upload fahis-ios ios/fahis.ipa --clobber
